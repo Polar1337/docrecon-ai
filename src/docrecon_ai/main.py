@@ -2,473 +2,384 @@
 """
 DocRecon AI - Main CLI Application
 
-Command-line interface for the DocRecon AI document consolidation tool.
+AI-powered document analysis and consolidation tool for enterprise environments.
 """
 
-import argparse
+import click
 import logging
 import sys
 import os
 from pathlib import Path
-from typing import Dict, Any, List, Optional
-import json
-import time
+from typing import List, Optional
 
-from .config import DocReconConfig
+from .config import Config
 from .crawler.main import DocumentCrawler
 from .nlp.analyzer import NLPAnalyzer
 from .detection.main import DuplicateDetector
 from .reporting.main import ReportGenerator
 
 
-def setup_logging(log_level: str = 'INFO', log_file: Optional[str] = None):
-    """Setup logging configuration"""
-    level = getattr(logging, log_level.upper(), logging.INFO)
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+@click.group()
+@click.version_option(version="1.0.0")
+@click.option('--config', '-c', type=click.Path(exists=True), help='Configuration file path')
+@click.option('--log-level', type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']), default='INFO', help='Logging level')
+@click.option('--log-file', type=click.Path(), help='Log file path')
+@click.pass_context
+def cli(ctx, config, log_level, log_file):
+    """DocRecon AI - Document Analysis and Consolidation Tool"""
     
-    # Create formatter
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    
-    # Setup console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    
-    # Setup root logger
-    root_logger = logging.getLogger()
-    root_logger.setLevel(level)
-    root_logger.addHandler(console_handler)
-    
-    # Setup file handler if specified
+    # Set up logging
     if log_file:
         file_handler = logging.FileHandler(log_file)
-        file_handler.setFormatter(formatter)
-        root_logger.addHandler(file_handler)
-
-
-def create_argument_parser() -> argparse.ArgumentParser:
-    """Create command-line argument parser"""
-    parser = argparse.ArgumentParser(
-        description='DocRecon AI - Document Consolidation Tool',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Analyze local directory
-  docrecon_ai analyze /path/to/documents --output ./results
-
-  # Analyze with custom config
-  docrecon_ai analyze /path/to/documents --config config.yaml
-
-  # Generate dashboard
-  docrecon_ai dashboard --results ./results/analysis.json
-
-  # Export specific format
-  docrecon_ai export ./results/analysis.json --format csv --output ./exports
-        """
-    )
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        logging.getLogger().addHandler(file_handler)
     
-    # Global options
-    parser.add_argument(
-        '--config', '-c',
-        type=str,
-        help='Path to configuration file'
-    )
-    parser.add_argument(
-        '--log-level',
-        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
-        default='INFO',
-        help='Logging level'
-    )
-    parser.add_argument(
-        '--log-file',
-        type=str,
-        help='Log file path'
-    )
-    parser.add_argument(
-        '--verbose', '-v',
-        action='store_true',
-        help='Enable verbose output'
-    )
+    logging.getLogger().setLevel(getattr(logging, log_level))
     
-    # Subcommands
-    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+    # Load configuration
+    if config:
+        config_path = Path(config)
+    else:
+        # Try default config locations
+        config_path = Path('config/default.yaml')
+        if not config_path.exists():
+            config_path = Path('config/sharepoint_onprem.yaml')
     
-    # Analyze command
-    analyze_parser = subparsers.add_parser(
-        'analyze',
-        help='Analyze documents for duplicates and consolidation opportunities'
-    )
-    analyze_parser.add_argument(
-        'paths',
-        nargs='+',
-        help='Paths to analyze (directories or files)'
-    )
-    analyze_parser.add_argument(
-        '--output', '-o',
-        type=str,
-        required=True,
-        help='Output directory for results'
-    )
-    analyze_parser.add_argument(
-        '--include-nlp',
-        action='store_true',
-        help='Include NLP analysis (slower but more insights)'
-    )
-    analyze_parser.add_argument(
-        '--skip-similarity',
-        action='store_true',
-        help='Skip similarity analysis (faster)'
-    )
-    analyze_parser.add_argument(
-        '--max-files',
-        type=int,
-        help='Maximum number of files to analyze'
-    )
-    analyze_parser.add_argument(
-        '--file-types',
-        nargs='+',
-        help='File extensions to include (e.g., .pdf .docx)'
-    )
-    
-    # Report command
-    report_parser = subparsers.add_parser(
-        'report',
-        help='Generate reports from analysis results'
-    )
-    report_parser.add_argument(
-        'results',
-        type=str,
-        help='Path to analysis results JSON file'
-    )
-    report_parser.add_argument(
-        '--output', '-o',
-        type=str,
-        required=True,
-        help='Output directory for reports'
-    )
-    report_parser.add_argument(
-        '--formats',
-        nargs='+',
-        choices=['html', 'csv', 'json'],
-        default=['html', 'csv'],
-        help='Report formats to generate'
-    )
-    report_parser.add_argument(
-        '--title',
-        type=str,
-        help='Custom report title'
-    )
-    
-    # Dashboard command
-    dashboard_parser = subparsers.add_parser(
-        'dashboard',
-        help='Launch interactive dashboard'
-    )
-    dashboard_parser.add_argument(
-        '--results',
-        type=str,
-        help='Path to analysis results JSON file'
-    )
-    dashboard_parser.add_argument(
-        '--port',
-        type=int,
-        default=8501,
-        help='Port for dashboard (default: 8501)'
-    )
-    
-    # Export command
-    export_parser = subparsers.add_parser(
-        'export',
-        help='Export analysis results in specific format'
-    )
-    export_parser.add_argument(
-        'results',
-        type=str,
-        help='Path to analysis results JSON file'
-    )
-    export_parser.add_argument(
-        '--format',
-        choices=['csv', 'json', 'html'],
-        required=True,
-        help='Export format'
-    )
-    export_parser.add_argument(
-        '--output', '-o',
-        type=str,
-        required=True,
-        help='Output path'
-    )
-    export_parser.add_argument(
-        '--component',
-        choices=['documents', 'duplicates', 'recommendations', 'all'],
-        default='all',
-        help='Component to export'
-    )
-    
-    return parser
+    if config_path.exists():
+        ctx.obj = Config(str(config_path))
+        logger.info(f"Loaded configuration from {config_path}")
+    else:
+        ctx.obj = Config()
+        logger.warning("No configuration file found, using defaults")
 
 
-def load_analysis_results(results_path: str) -> Dict[str, Any]:
-    """Load analysis results from JSON file"""
-    try:
-        with open(results_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception as e:
-        logging.error(f"Error loading analysis results from {results_path}: {e}")
-        sys.exit(1)
-
-
-def save_analysis_results(results: Dict[str, Any], output_path: str):
-    """Save analysis results to JSON file"""
-    try:
-        os.makedirs(Path(output_path).parent, exist_ok=True)
-        with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(results, f, indent=2, default=str)
-        logging.info(f"Analysis results saved to {output_path}")
-    except Exception as e:
-        logging.error(f"Error saving analysis results to {output_path}: {e}")
-        sys.exit(1)
-
-
-def cmd_analyze(args, config: DocReconConfig) -> int:
-    """Execute analyze command"""
-    logging.info("Starting document analysis...")
-    start_time = time.time()
+@cli.command()
+@click.argument('paths', nargs=-1, type=click.Path())
+@click.option('--output', '-o', required=True, type=click.Path(), help='Output directory for results')
+@click.option('--include-nlp', is_flag=True, help='Enable NLP analysis (slower but more detailed)')
+@click.option('--skip-similarity', is_flag=True, help='Skip similarity analysis (faster)')
+@click.option('--max-files', type=int, help='Maximum number of files to analyze')
+@click.option('--file-types', multiple=True, help='File extensions to include (e.g., .pdf .docx)')
+@click.option('--sharepoint-site', help='Specific SharePoint site to crawl')
+@click.option('--parallel-workers', type=int, help='Number of parallel workers')
+@click.pass_context
+def analyze(ctx, paths, output, include_nlp, skip_similarity, max_files, file_types, sharepoint_site, parallel_workers):
+    """Analyze documents for duplicates and similarities."""
+    
+    config = ctx.obj
+    output_path = Path(output)
+    output_path.mkdir(parents=True, exist_ok=True)
     
     try:
-        # Initialize components
-        crawler = DocumentCrawler(config)
-        duplicate_detector = DuplicateDetector(config)
+        # Update config with command line options
+        if max_files:
+            config.set('crawler.max_files', max_files)
+        if file_types:
+            config.set('crawler.file_extensions', list(file_types))
+        if parallel_workers:
+            config.set('crawler.parallel_workers', parallel_workers)
         
-        # Optional NLP analyzer
-        nlp_analyzer = None
-        if args.include_nlp:
-            nlp_analyzer = NLPAnalyzer(config)
+        # Initialize crawler
+        logger.info("Initializing document crawler...")
+        crawler = DocumentCrawler(config)
         
         # Crawl documents
-        logging.info(f"Crawling documents from {len(args.paths)} path(s)...")
-        documents = []
+        if sharepoint_site:
+            logger.info(f"Crawling SharePoint site: {sharepoint_site}")
+            sharepoint_crawler = crawler.get_crawler('sharepoint_onprem')
+            if sharepoint_crawler:
+                documents = sharepoint_crawler.crawl_path(sharepoint_site)
+            else:
+                logger.error("SharePoint crawler not available")
+                sys.exit(1)
+        else:
+            logger.info("Crawling all configured sources...")
+            documents = crawler.crawl_all_sources(list(paths) if paths else None)
         
-        for path in args.paths:
-            if not os.path.exists(path):
-                logging.warning(f"Path does not exist: {path}")
-                continue
-            
-            path_documents = crawler.crawl_path(path)
-            documents.extend(path_documents)
-            
-            if args.max_files and len(documents) >= args.max_files:
-                documents = documents[:args.max_files]
-                break
+        logger.info(f"Found {len(documents)} documents")
         
-        if not documents:
-            logging.error("No documents found to analyze")
-            return 1
+        # NLP Analysis
+        if include_nlp:
+            logger.info("Performing NLP analysis...")
+            nlp_analyzer = NLPAnalyzer(config)
+            documents = nlp_analyzer.analyze_documents(documents)
         
-        logging.info(f"Found {len(documents)} documents")
+        # Duplicate Detection
+        if not skip_similarity:
+            logger.info("Detecting duplicates and similarities...")
+            detector = DuplicateDetector(config)
+            duplicate_groups, similar_groups = detector.detect_duplicates(documents)
+        else:
+            duplicate_groups, similar_groups = [], []
         
-        # Filter by file types if specified
-        if args.file_types:
-            extensions = [ext.lower() if ext.startswith('.') else f'.{ext.lower()}' 
-                         for ext in args.file_types]
-            documents = [doc for doc in documents if doc.file_extension.lower() in extensions]
-            logging.info(f"Filtered to {len(documents)} documents by file type")
-        
-        # Detect duplicates
-        logging.info("Detecting duplicates...")
-        duplicate_results = duplicate_detector.detect_all_duplicates(documents)
-        
-        # NLP analysis
-        nlp_results = {}
-        if nlp_analyzer and not args.skip_similarity:
-            logging.info("Performing NLP analysis...")
-            nlp_results = nlp_analyzer.analyze_documents(documents)
-        
-        # Generate recommendations
-        logging.info("Generating recommendations...")
-        recommendations = duplicate_detector.generate_recommendations(
-            duplicate_results, documents
+        # Generate Reports
+        logger.info("Generating reports...")
+        report_generator = ReportGenerator(config)
+        report_generator.generate_all_reports(
+            documents=documents,
+            duplicate_groups=duplicate_groups,
+            similar_groups=similar_groups,
+            output_dir=str(output_path)
         )
         
-        # Compile results
-        analysis_results = {
-            'metadata': {
-                'analysis_timestamp': time.time(),
-                'analysis_duration': time.time() - start_time,
-                'tool_version': '1.0.0',
-                'analyzed_paths': args.paths,
-                'total_documents': len(documents),
-            },
-            'statistics': {
-                'total_documents': len(documents),
-                'processing_time': time.time() - start_time,
-                'paths_analyzed': len(args.paths),
-            },
-            'documents': [doc.__dict__ for doc in documents],
-            **duplicate_results,
-            **nlp_results,
-            'recommendations': recommendations,
+        # Save analysis results
+        import json
+        results = {
+            'documents': [doc.to_dict() for doc in documents],
+            'duplicate_groups': duplicate_groups,
+            'similar_groups': similar_groups,
+            'statistics': crawler.get_statistics()
         }
         
-        # Save results
-        output_file = os.path.join(args.output, 'analysis_results.json')
-        save_analysis_results(analysis_results, output_file)
+        with open(output_path / 'analysis_results.json', 'w', encoding='utf-8') as f:
+            json.dump(results, f, indent=2, ensure_ascii=False, default=str)
         
-        # Generate basic report
-        report_generator = ReportGenerator(config)
-        report_results = report_generator.generate_comprehensive_report(
-            analysis_results,
-            args.output,
-            formats=['html'],
-            report_title="DocRecon AI - Analysis Report"
-        )
-        
-        # Summary
-        end_time = time.time()
-        duration = end_time - start_time
-        
-        print(f"\n✅ Analysis completed in {duration:.2f} seconds")
-        print(f"📊 Analyzed {len(documents)} documents")
-        print(f"🔍 Found {len(duplicate_results.get('hash_duplicates', {}).get('duplicate_groups', []))} exact duplicate groups")
-        print(f"📁 Results saved to: {args.output}")
-        
-        if report_results.get('files_created', {}).get('html'):
-            print(f"📄 HTML report: {report_results['files_created']['html']}")
-        
-        return 0
+        logger.info(f"Analysis complete! Results saved to {output_path}")
         
     except Exception as e:
-        logging.error(f"Error during analysis: {e}")
-        return 1
+        logger.error(f"Analysis failed: {e}")
+        sys.exit(1)
 
 
-def cmd_report(args, config: DocReconConfig) -> int:
-    """Execute report command"""
-    logging.info("Generating reports...")
+@cli.command()
+@click.option('--config', type=click.Path(exists=True), help='Configuration file to validate')
+@click.option('--verbose', is_flag=True, help='Show detailed validation results')
+@click.pass_context
+def validate_config(ctx, config, verbose):
+    """Validate configuration file."""
+    
+    config_obj = ctx.obj
+    if config:
+        config_obj = Config(config)
+    
+    try:
+        # Initialize crawler to validate configuration
+        crawler = DocumentCrawler(config_obj)
+        validation_results = crawler.validate_configurations()
+        
+        all_valid = True
+        for crawler_name, result in validation_results.items():
+            if result['valid']:
+                click.echo(f"✅ {crawler_name}: Configuration valid")
+            else:
+                click.echo(f"❌ {crawler_name}: Configuration invalid")
+                for error in result['errors']:
+                    click.echo(f"   - {error}")
+                all_valid = False
+        
+        if verbose:
+            click.echo("\nDetailed configuration:")
+            for key, value in config_obj.get_all().items():
+                if 'password' not in key.lower():
+                    click.echo(f"  {key}: {value}")
+        
+        if all_valid:
+            click.echo("\n✅ All configurations are valid!")
+        else:
+            click.echo("\n❌ Some configurations have errors!")
+            sys.exit(1)
+            
+    except Exception as e:
+        click.echo(f"❌ Configuration validation failed: {e}")
+        sys.exit(1)
+
+
+@cli.command()
+@click.option('--crawler', help='Test specific crawler (local, smb, sharepoint_onprem, onenote)')
+@click.pass_context
+def test_connection(ctx, crawler):
+    """Test connections to configured sources."""
+    
+    config = ctx.obj
+    
+    try:
+        document_crawler = DocumentCrawler(config)
+        
+        if crawler:
+            # Test specific crawler
+            crawler_instance = document_crawler.get_crawler(crawler)
+            if not crawler_instance:
+                click.echo(f"❌ Crawler '{crawler}' not found or not enabled")
+                sys.exit(1)
+            
+            if hasattr(crawler_instance, 'test_connection'):
+                result = crawler_instance.test_connection()
+                if result:
+                    click.echo(f"✅ {crawler}: Connection successful")
+                else:
+                    click.echo(f"❌ {crawler}: Connection failed")
+                    sys.exit(1)
+            else:
+                click.echo(f"⚠️  {crawler}: No connection test available")
+        else:
+            # Test all crawlers
+            results = document_crawler.test_connections()
+            
+            all_passed = True
+            for crawler_name, result in results.items():
+                if result:
+                    click.echo(f"✅ {crawler_name}: Connection successful")
+                else:
+                    click.echo(f"❌ {crawler_name}: Connection failed")
+                    all_passed = False
+            
+            if all_passed:
+                click.echo("\n✅ All connection tests passed!")
+            else:
+                click.echo("\n❌ Some connection tests failed!")
+                sys.exit(1)
+                
+    except Exception as e:
+        click.echo(f"❌ Connection test failed: {e}")
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument('results_file', type=click.Path(exists=True))
+@click.option('--output', '-o', required=True, type=click.Path(), help='Output directory for reports')
+@click.option('--formats', multiple=True, default=['html', 'csv'], help='Report formats (html, csv, json)')
+@click.option('--title', help='Custom report title')
+@click.pass_context
+def report(ctx, results_file, output, formats, title):
+    """Generate reports from analysis results."""
+    
+    config = ctx.obj
+    output_path = Path(output)
+    output_path.mkdir(parents=True, exist_ok=True)
     
     try:
         # Load analysis results
-        analysis_results = load_analysis_results(args.results)
+        import json
+        with open(results_file, 'r', encoding='utf-8') as f:
+            results = json.load(f)
         
         # Generate reports
         report_generator = ReportGenerator(config)
-        report_results = report_generator.generate_comprehensive_report(
-            analysis_results,
-            args.output,
-            formats=args.formats,
-            report_title=args.title
-        )
         
-        # Summary
-        print(f"\n✅ Reports generated successfully")
-        print(f"📁 Output directory: {args.output}")
+        for format_type in formats:
+            if format_type == 'html':
+                report_generator.generate_html_report(
+                    documents=results['documents'],
+                    duplicate_groups=results.get('duplicate_groups', []),
+                    similar_groups=results.get('similar_groups', []),
+                    output_path=str(output_path / 'report.html'),
+                    title=title
+                )
+            elif format_type == 'csv':
+                report_generator.generate_csv_reports(
+                    documents=results['documents'],
+                    duplicate_groups=results.get('duplicate_groups', []),
+                    output_dir=str(output_path)
+                )
+            elif format_type == 'json':
+                report_generator.generate_json_report(
+                    documents=results['documents'],
+                    duplicate_groups=results.get('duplicate_groups', []),
+                    similar_groups=results.get('similar_groups', []),
+                    output_path=str(output_path / 'report.json')
+                )
         
-        for format_name, file_path in report_results.get('files_created', {}).items():
-            print(f"📄 {format_name.upper()}: {file_path}")
-        
-        return 0
+        logger.info(f"Reports generated in {output_path}")
         
     except Exception as e:
-        logging.error(f"Error generating reports: {e}")
-        return 1
+        logger.error(f"Report generation failed: {e}")
+        sys.exit(1)
 
 
-def cmd_dashboard(args, config: DocReconConfig) -> int:
-    """Execute dashboard command"""
+@cli.command()
+@click.option('--results', type=click.Path(exists=True), help='Analysis results file')
+@click.option('--port', type=int, default=8501, help='Port for dashboard')
+@click.pass_context
+def dashboard(ctx, results, port):
+    """Start interactive dashboard."""
+    
     try:
-        from .dashboard.main import run_dashboard
+        import streamlit.web.cli as stcli
+        import sys
         
-        analysis_results = None
-        if args.results:
-            analysis_results = load_analysis_results(args.results)
+        # Prepare streamlit arguments
+        dashboard_script = Path(__file__).parent / 'dashboard' / 'main.py'
         
-        print(f"🚀 Starting dashboard on port {args.port}")
-        print(f"🌐 Open your browser to: http://localhost:{args.port}")
+        args = [
+            'streamlit', 'run', str(dashboard_script),
+            '--server.port', str(port),
+            '--server.headless', 'true'
+        ]
         
-        run_dashboard(analysis_results, args.port)
-        return 0
+        if results:
+            args.extend(['--', '--results', results])
+        
+        # Run streamlit
+        sys.argv = args
+        stcli.main()
         
     except ImportError:
-        logging.error("Dashboard requires Streamlit. Install: pip install streamlit")
-        return 1
+        click.echo("❌ Streamlit not installed. Install with: pip install streamlit")
+        sys.exit(1)
     except Exception as e:
-        logging.error(f"Error starting dashboard: {e}")
-        return 1
+        click.echo(f"❌ Dashboard failed to start: {e}")
+        sys.exit(1)
 
 
-def cmd_export(args, config: DocReconConfig) -> int:
-    """Execute export command"""
-    logging.info("Exporting analysis results...")
+@cli.command()
+@click.argument('results_file', type=click.Path(exists=True))
+@click.option('--format', 'export_format', type=click.Choice(['csv', 'json']), required=True, help='Export format')
+@click.option('--output', '-o', required=True, type=click.Path(), help='Output file path')
+@click.option('--component', type=click.Choice(['documents', 'duplicates', 'recommendations']), help='Specific component to export')
+@click.pass_context
+def export(ctx, results_file, export_format, output, component):
+    """Export analysis data in various formats."""
     
     try:
         # Load analysis results
-        analysis_results = load_analysis_results(args.results)
+        import json
+        with open(results_file, 'r', encoding='utf-8') as f:
+            results = json.load(f)
         
-        # Initialize appropriate exporter
-        if args.format == 'csv':
-            from .reporting.csv_exporter import CSVExporter
-            exporter = CSVExporter(config)
+        # Export data
+        if export_format == 'csv':
+            import pandas as pd
             
-            if args.component == 'all':
-                success = exporter.export_all_results(analysis_results, args.output)
-            elif args.component == 'documents':
-                success = exporter.export_document_inventory(
-                    analysis_results.get('documents', []), args.output
-                )
-            # Add other components as needed
+            if component == 'documents' or not component:
+                df = pd.DataFrame(results['documents'])
+                df.to_csv(output, index=False, encoding='utf-8')
+            elif component == 'duplicates':
+                # Flatten duplicate groups
+                duplicate_data = []
+                for group in results.get('duplicate_groups', []):
+                    for doc in group.get('documents', []):
+                        duplicate_data.append({
+                            'group_id': group.get('group_id'),
+                            'filename': doc.get('filename'),
+                            'path': doc.get('path'),
+                            'size': doc.get('size')
+                        })
+                df = pd.DataFrame(duplicate_data)
+                df.to_csv(output, index=False, encoding='utf-8')
+                
+        elif export_format == 'json':
+            export_data = results
+            if component:
+                export_data = {component: results.get(component, [])}
             
-        elif args.format == 'json':
-            from .reporting.json_exporter import JSONExporter
-            exporter = JSONExporter(config)
-            success = exporter.export_complete_results(analysis_results, args.output)
-            
-        elif args.format == 'html':
-            from .reporting.html_reporter import HTMLReporter
-            reporter = HTMLReporter(config)
-            success = reporter.generate_comprehensive_report(analysis_results, args.output)
+            with open(output, 'w', encoding='utf-8') as f:
+                json.dump(export_data, f, indent=2, ensure_ascii=False, default=str)
         
-        if success:
-            print(f"✅ Export completed: {args.output}")
-            return 0
-        else:
-            print("❌ Export failed")
-            return 1
-            
+        click.echo(f"✅ Data exported to {output}")
+        
     except Exception as e:
-        logging.error(f"Error during export: {e}")
-        return 1
-
-
-def main():
-    """Main entry point"""
-    parser = create_argument_parser()
-    args = parser.parse_args()
-    
-    # Setup logging
-    log_level = 'DEBUG' if args.verbose else args.log_level
-    setup_logging(log_level, args.log_file)
-    
-    # Load configuration
-    try:
-        config = DocReconConfig(args.config)
-    except Exception as e:
-        logging.error(f"Error loading configuration: {e}")
-        return 1
-    
-    # Execute command
-    if args.command == 'analyze':
-        return cmd_analyze(args, config)
-    elif args.command == 'report':
-        return cmd_report(args, config)
-    elif args.command == 'dashboard':
-        return cmd_dashboard(args, config)
-    elif args.command == 'export':
-        return cmd_export(args, config)
-    else:
-        parser.print_help()
-        return 1
+        click.echo(f"❌ Export failed: {e}")
+        sys.exit(1)
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    cli()
 

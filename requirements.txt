@@ -44,6 +44,12 @@ mypy>=0.991
 smbprotocol>=1.10.0
 pysmb>=1.2.8
 
+# SharePoint On-Premise authentication
+requests-ntlm>=1.1.0
+
+# OneNote COM interface (Windows only)
+pywin32>=304; platform_system=="Windows"
+
 # Hashing and security
 hashlib-compat>=1.0.1
 

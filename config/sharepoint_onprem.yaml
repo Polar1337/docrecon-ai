@@ -1,0 +1,229 @@
+# DocRecon AI - SharePoint 2019 On-Premise Konfiguration
+# 
+# WICHTIG: Ersetzen Sie alle Platzhalter mit Ihren tatsächlichen Werten
+# Verwenden Sie Umgebungsvariablen für sensible Daten
+
+# =============================================================================
+# SHAREPOINT 2019 ON-PREMISE KONFIGURATION
+# =============================================================================
+
+crawler:
+  # Aktivierte Crawler-Module
+  enabled_crawlers:
+    - local
+    - smb
+    - sharepoint_onprem
+    - onenote
+
+  # SharePoint 2019 On-Premise Einstellungen
+  sharepoint_onprem:
+    enabled: true
+    
+    # ERFORDERLICH: SharePoint Server URL
+    # Beispiel: https://sharepoint.ihrefirma.de
+    server_url: "${SHAREPOINT_SERVER_URL}"
+    
+    # ERFORDERLICH: Authentifizierungsmethode
+    # Optionen: ntlm, basic, kerberos
+    authentication_method: "ntlm"
+    
+    # ERFORDERLICH: Anmeldedaten
+    # Verwenden Sie Umgebungsvariablen für Sicherheit
+    username: "${SHAREPOINT_USERNAME}"
+    password: "${SHAREPOINT_PASSWORD}"
+    domain: "${SHAREPOINT_DOMAIN}"  # Optional, für NTLM
+    
+    # Site Collections zum Durchsuchen
+    # ANPASSEN: Fügen Sie Ihre Site Collections hinzu
+    site_collections:
+      - "/sites/dokumente"
+      - "/sites/projekte"
+      - "/sites/archiv"
+      - "/sites/teams"
+      # Weitere Site Collections hier hinzufügen...
+    
+    # Document Libraries zum Durchsuchen
+    # ANPASSEN: Fügen Sie Ihre Document Libraries hinzu
+    document_libraries:
+      - "Shared Documents"
+      - "Documents"
+      - "Dokumente"
+      - "Project Files"
+      - "Archive"
+      # Weitere Libraries hier hinzufügen...
+    
+    # Erweiterte Einstellungen
+    include_subsites: true
+    max_depth: 5
+    timeout_seconds: 30
+    retry_attempts: 3
+    batch_size: 100
+
+  # OneNote Integration
+  onenote:
+    enabled: true
+    
+    # Zugriffsmethode für OneNote
+    # Optionen: sharepoint, local_com, local_files
+    access_method: "sharepoint"  # Für OneNote in SharePoint
+    
+    # Inhaltsextraktion
+    include_sections: true
+    include_pages: true
+    extract_text: true
+    extract_images: false
+
+  # Lokale Laufwerke und Netzlaufwerke
+  local:
+    enabled: true
+    # ANPASSEN: Fügen Sie Ihre lokalen Pfade hinzu
+    paths:
+      - "C:\\Dokumente"
+      - "D:\\Projekte"
+      - "E:\\Archiv"
+
+  # SMB/CIFS Netzlaufwerke
+  smb:
+    enabled: true
+    # ANPASSEN: Fügen Sie Ihre Netzlaufwerke hinzu
+    shares:
+      - path: "\\\\fileserver01\\dokumente"
+        username: "${SMB_USERNAME}"
+        password: "${SMB_PASSWORD}"
+        domain: "${SMB_DOMAIN}"
+      - path: "\\\\nas01\\projekte"
+        username: "${NAS_USERNAME}"
+        password: "${NAS_PASSWORD}"
+        domain: "${NAS_DOMAIN}"
+
+  # Allgemeine Crawler-Einstellungen
+  max_file_size_mb: 100
+  include_hidden_files: false
+  parallel_workers: 4
+  
+  # Unterstützte Dateierweiterungen
+  file_extensions:
+    - .pdf
+    - .docx
+    - .doc
+    - .xlsx
+    - .xls
+    - .pptx
+    - .ppt
+    - .txt
+    - .html
+    - .htm
+    - .xml
+    - .one      # OneNote Sections
+    - .onetoc2  # OneNote Table of Contents
+    - .onepkg   # OneNote Packages
+
+  # Ausschlussmuster
+  exclude_patterns:
+    - "*.tmp"
+    - "~$*"
+    - ".git/*"
+    - "node_modules/*"
+    - "Thumbs.db"
+    - ".DS_Store"
+
+# =============================================================================
+# NLP UND ANALYSE KONFIGURATION
+# =============================================================================
+
+nlp:
+  # NLP-Features aktivieren
+  enable_embeddings: true
+  enable_entity_extraction: true
+  enable_keyword_extraction: true
+  
+  # Ähnlichkeitsschwellen
+  similarity_threshold: 0.8
+  clustering_threshold: 0.7
+  
+  # Spracheinstellungen
+  language: "de"  # Deutsch
+  
+  # Modell-Einstellungen
+  embedding_model: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
+# =============================================================================
+# DUPLIKATERKENNUNG
+# =============================================================================
+
+detection:
+  # Hash-Algorithmus für exakte Duplikate
+  hash_algorithm: "sha256"
+  
+  # Ähnlichkeitsschwellen
+  similarity_threshold: 0.9
+  version_detection_threshold: 0.85
+  
+  # Versionserkennung aktivieren
+  enable_version_detection: true
+  
+  # Versionsmuster
+  version_patterns:
+    - "_v\\d+"
+    - "_version\\d+"
+    - "_final"
+    - "_neu"
+    - "_aktuell"
+    - "\\(\\d+\\)"
+
+# =============================================================================
+# BERICHTSERSTELLUNG
+# =============================================================================
+
+reporting:
+  # Ausgabeformate
+  output_formats:
+    - html
+    - csv
+    - json
+  
+  # Berichtsoptionen
+  include_charts: true
+  include_recommendations: true
+  include_statistics: true
+  
+  # Sprache für Berichte
+  language: "de"
+
+# =============================================================================
+# PERFORMANCE UND SICHERHEIT
+# =============================================================================
+
+performance:
+  # Speicher-Management
+  memory_limit_mb: 4096
+  chunk_size: 500
+  
+  # Parallele Verarbeitung
+  max_workers: 8
+  
+  # Caching
+  enable_caching: true
+  cache_ttl_hours: 24
+
+security:
+  # Lokale Verarbeitung (keine Cloud-Services)
+  local_processing_only: true
+  
+  # Credential-Handling
+  use_environment_variables: true
+  
+  # Logging-Level für sensible Daten
+  mask_credentials_in_logs: true
+
+# =============================================================================
+# LOGGING
+# =============================================================================
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "docrecon_ai.log"
+  max_size_mb: 10
+  backup_count: 5
+

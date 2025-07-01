@@ -1,0 +1,83 @@
+# DocRecon AI - Standard-Konfiguration
+# Diese Datei enthält die Standardeinstellungen für DocRecon AI
+
+# Crawler-Einstellungen
+crawler:
+  max_file_size: "100MB"
+  supported_extensions:
+    - '.pdf'
+    - '.docx'
+    - '.doc'
+    - '.xlsx'
+    - '.xls'
+    - '.pptx'
+    - '.ppt'
+    - '.txt'
+    - '.md'
+    - '.html'
+    - '.htm'
+    - '.rtf'
+    - '.odt'
+    - '.ods'
+  ignore_patterns:
+    - '~$*'
+    - '.tmp'
+    - 'Thumbs.db'
+    - '.DS_Store'
+    - '*.lnk'
+    - '*.url'
+  max_depth: 10
+  follow_symlinks: false
+  threads: 4
+
+# NLP-Einstellungen
+nlp:
+  model: "sentence-transformers/all-MiniLM-L6-v2"
+  similarity_threshold: 0.85
+  language: "de"  # oder "en" für Englisch
+  batch_size: 32
+  max_text_length: 10000
+  enable_entities: true
+  enable_keywords: true
+  enable_clustering: true
+
+# Duplikaterkennung
+duplicates:
+  hash_algorithm: "sha256"
+  content_similarity_threshold: 0.9
+  filename_similarity_threshold: 0.8
+  size_tolerance: 0.05  # 5% Größentoleranz
+  enable_fuzzy_matching: true
+
+# Microsoft Graph API (optional)
+graph:
+  tenant_id: null  # Ihre Azure AD Tenant ID
+  client_id: null  # Ihre App Registration Client ID
+  client_secret: null  # Ihr Client Secret
+  scopes:
+    - "https://graph.microsoft.com/Files.Read.All"
+    - "https://graph.microsoft.com/Sites.Read.All"
+
+# Berichtserstellung
+reporting:
+  output_format: "html"
+  include_thumbnails: true
+  max_preview_length: 500
+  group_by_similarity: true
+  show_file_paths: true
+  include_metadata: true
+
+# Dashboard-Einstellungen
+dashboard:
+  port: 8501
+  host: "localhost"
+  theme: "light"
+  page_size: 50
+  enable_download: true
+
+# Globale Einstellungen
+debug: false
+log_level: "INFO"
+cache_dir: "~/.docrecon_cache"
+temp_dir: "/tmp/docrecon"
+
